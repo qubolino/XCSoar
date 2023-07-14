@@ -22,6 +22,8 @@
 #define RIGHT 2
 #define BOTTOM 3
 
+#define MAX_HEIGHT_DEGREES 40.f
+
 int HorizonRenderer::lines_intersect(PixelPoint p1, PixelPoint p2, 
                     PixelPoint p3, PixelPoint p4, 
                     PixelPoint &intersect){
@@ -124,8 +126,8 @@ HorizonRenderer::Draw(Canvas &canvas, const PixelRect &rc,
   int h = int(rc.GetHeight());
 
   // compute theoretical horizon line
-  PixelPoint p1 = {-w, int(h/2.f * pitch_degrees /40.f)};
-  PixelPoint p2 = {w, int(h/2.f * pitch_degrees /40.f)};
+  PixelPoint p1 = {-w, int(h/2.f * pitch_degrees /MAX_HEIGHT_DEGREES)};
+  PixelPoint p2 = {w, int(h/2.f * pitch_degrees /MAX_HEIGHT_DEGREES)};
   rotate(p1, center, Angle::Degrees(- bank_degrees), p1);
   rotate(p2, center, Angle::Degrees(- bank_degrees), p2);
 
@@ -276,15 +278,15 @@ HorizonRenderer::Draw(Canvas &canvas, const PixelRect &rc,
   canvas.DrawPolygon(zero_mark, 3);
 
   for (int k=-20; k<=20; k+=10){
-    m1 = {-radius/5, int(h/2.f*(pitch_degrees+k)/40)};
-    m2 = {+radius/5, int(h/2.f*(pitch_degrees+k)/40)};
+    m1 = {-radius/5, int(h/2.f*(pitch_degrees+k)/MAX_HEIGHT_DEGREES)};
+    m2 = {+radius/5, int(h/2.f*(pitch_degrees+k)/MAX_HEIGHT_DEGREES)};
     rotate(m1, center, Angle::Degrees(- bank_degrees), p1);
     rotate(m2, center, Angle::Degrees(- bank_degrees), p2);
     canvas.DrawLine(p1,p2);
   }
   for (int k=-25; k<=25; k+=10){
-    m1 = {-radius/10, int(h/2.f*(pitch_degrees+k)/40)};
-    m2 = {+radius/10, int(h/2.f*(pitch_degrees+k)/40)};
+    m1 = {-radius/10, int(h/2.f*(pitch_degrees+k)/MAX_HEIGHT_DEGREES)};
+    m2 = {+radius/10, int(h/2.f*(pitch_degrees+k)/MAX_HEIGHT_DEGREES)};
     rotate(m1, center, Angle::Degrees(- bank_degrees), p1);
     rotate(m2, center, Angle::Degrees(- bank_degrees), p2);
     canvas.DrawLine(p1,p2);
@@ -297,7 +299,6 @@ HorizonRenderer::Draw(Canvas &canvas, const PixelRect &rc,
   canvas.DrawLine({center.x - radius + radius/5, center.y}, {center.x - radius / 10, center.y});
   canvas.DrawLine({center.x + radius/10, center.y + radius / 10}, {center.x + radius/10, center.y});
   canvas.DrawLine({center.x - radius/10, center.y + radius / 10}, {center.x - radius/10, center.y});
-  // canvas.DrawLine({center.x - 2, center.y}, {center.x +2, center.y});
   canvas.DrawCircle(center, 2);
 
   BulkPixelPoint triangle[3] = {
