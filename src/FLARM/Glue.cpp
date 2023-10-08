@@ -7,9 +7,12 @@
 #include "FlarmNetReader.hpp"
 #include "NameFile.hpp"
 #include "Components.hpp"
+#include "BackendComponents.hpp"
 #include "MergeThread.hpp"
 #include "LocalPath.hpp"
 #include "io/DataFile.hpp"
+#include "io/Reader.hxx"
+#include "io/BufferedReader.hxx"
 #include "io/LineReader.hpp"
 #include "io/FileOutputStream.hxx"
 #include "io/BufferedOutputStream.hxx"
@@ -47,8 +50,9 @@ LoadSecondary(FlarmNameDatabase &db) noexcept
 try {
   LogString("OpenFLARMDetails");
 
-  auto reader = OpenDataTextFile(_T("xcsoar-flarm.txt"));
-  LoadFlarmNameFile(*reader, db);
+  auto reader = OpenDataFile(_T("xcsoar-flarm.txt"));
+  BufferedReader buffered_reader{*reader};
+  LoadFlarmNameFile(buffered_reader, db);
 } catch (...) {
   LogError(std::current_exception());
 }
@@ -69,13 +73,13 @@ ReloadFlarmDatabases() noexcept
 
   /* the MergeThread must be suspended, because it reads the FLARM
      databases */
-  merge_thread->Suspend();
+  backend_components->merge_thread->Suspend();
 
   LoadSecondary(traffic_databases->flarm_names);
   LoadFLARMnet(traffic_databases->flarm_net);
   Profile::Load(Profile::map, traffic_databases->flarm_colors);
 
-  merge_thread->Resume();
+  backend_components->merge_thread->Resume();
 }
 
 void

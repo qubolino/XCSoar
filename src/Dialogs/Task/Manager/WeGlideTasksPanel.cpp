@@ -28,6 +28,7 @@
 #include "util/ConvertString.hpp"
 #include "UIGlobals.hpp"
 #include "Components.hpp"
+#include "DataComponents.hpp"
 #include "Interface.hpp"
 
 #include <cassert>
@@ -50,6 +51,7 @@ class WeGlideTasksPanel final
   TextWidget &summary;
   TwoWidgets *two_widgets;
   ButtonPanelWidget *buttons;
+  Button *load_button;
 
   using List = std::vector<WeGlide::TaskInfo>;
   List list;
@@ -78,8 +80,12 @@ public:
   }
 
   void CreateButtons(ButtonPanel &buttons) noexcept {
-    buttons.Add(_("Load"), [this](){ LoadTask(); });
+    load_button = buttons.Add(_("Load"), [this](){ LoadTask(); });
     buttons.Add(_("Refresh"), [this](){ ReloadList(); });
+  }
+
+  void UpdateButtons() noexcept {
+    load_button->SetEnabled(!list.empty());
   }
 
   void ReloadList() noexcept;
@@ -158,6 +164,7 @@ WeGlideTasksPanel::ReloadList() noexcept
                       [this](List &&_list){
                         list = std::move(_list);
                         GetList().SetLength(list.size());
+                        UpdateButtons();
                       },
                       [](std::exception_ptr error){
                         ShowError(error, _T("Error"));
@@ -193,7 +200,7 @@ try {
                                                          settings.weglide,
                                                          info.id,
                                                          settings.task,
-                                                         &way_points,
+                                                         data_components->waypoints.get(),
                                                          env),
                                    &env);
   if (!task)
@@ -231,6 +238,7 @@ WeGlideTasksPanel::Show(const PixelRect &rc) noexcept
   // TODO dialog.ShowTaskView(get_cursor_task());
 
   RefreshView();
+  UpdateButtons();
   ReloadList();
 
   ListWidget::Show(rc);

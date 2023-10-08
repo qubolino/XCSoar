@@ -135,9 +135,9 @@ TargetMapWindow::DrawTask(Canvas &canvas) noexcept
                              which may be invalid at this point, but it
                              will be used only if active, so it's ok */
                           task_manager->GetOrderedTask().GetTaskProjection(),
-                          ozv, false, TaskPointRenderer::ALL,
-                          Basic().location_available
-                          ? Basic().location : GeoPoint::Invalid());
+                          ozv, false,
+                          TaskPointRenderer::TargetVisibility::ALL,
+                          Basic().GetLocationOrInvalid());
     tpv.SetTaskFinished(Calculated().task_stats.task_finished);
     TaskRenderer dv(tpv, projection.GetScreenBounds());
     dv.Draw(*task);
@@ -316,7 +316,7 @@ TargetMapWindow::OnResize(PixelSize new_size) noexcept
 #endif
 
   projection.SetScreenSize(new_size);
-  projection.SetScreenOrigin(new_size.width / 2, new_size.height / 2);
+  projection.SetScreenOrigin(PixelRect{new_size}.GetCenter());
   projection.UpdateScreenBounds();
 }
 

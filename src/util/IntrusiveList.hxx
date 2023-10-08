@@ -13,6 +13,18 @@
 #include <type_traits>
 #include <utility>
 
+struct IntrusiveListOptions {
+	bool constant_time_size = false;
+
+	/**
+	 * Initialize the list head with nullptr (all zeroes) which
+	 * adds some code for checking nullptr, but may reduce the
+	 * data section for statically allocated lists.  It's a
+	 * trade-off.
+	 */
+	bool zero_initialized = false;
+};
+
 struct IntrusiveListNode {
 	IntrusiveListNode *next, *prev;
 
@@ -27,7 +39,7 @@ template<IntrusiveHookMode _mode=IntrusiveHookMode::NORMAL>
 class IntrusiveListHook {
 	template<typename T> friend struct IntrusiveListBaseHookTraits;
 	template<auto member> friend struct IntrusiveListMemberHookTraits;
-	template<typename T, typename HookTraits, bool> friend class IntrusiveList;
+	template<typename T, typename HookTraits, IntrusiveListOptions> friend class IntrusiveList;
 
 protected:
 	IntrusiveListNode siblings;
@@ -78,30 +90,25 @@ using AutoUnlinkIntrusiveListHook =
 	IntrusiveListHook<IntrusiveHookMode::AUTO_UNLINK>;
 
 /**
- * Detect the hook type which is embedded in the given type as a base
- * class.  This is a template to postpone the type checks, to allow
- * forward-declared types.
- */
-template<typename U>
-struct IntrusiveListHookDetection {
-	/* TODO can this be simplified somehow, without checking for
-	   all possible enum values? */
-	using type = std::conditional_t<std::is_base_of_v<IntrusiveListHook<IntrusiveHookMode::NORMAL>, U>,
-					IntrusiveListHook<IntrusiveHookMode::NORMAL>,
-					std::conditional_t<std::is_base_of_v<IntrusiveListHook<IntrusiveHookMode::TRACK>, U>,
-							   IntrusiveListHook<IntrusiveHookMode::TRACK>,
-							   std::conditional_t<std::is_base_of_v<IntrusiveListHook<IntrusiveHookMode::AUTO_UNLINK>, U>,
-									      IntrusiveListHook<IntrusiveHookMode::AUTO_UNLINK>,
-									      void>>>;
-};
-
-/**
  * For classes which embed #IntrusiveListHook as base class.
  */
 template<typename T>
 struct IntrusiveListBaseHookTraits {
+	/* a never-called helper function which is used by _Cast() */
+	template<IntrusiveHookMode mode>
+	static constexpr IntrusiveListHook<mode> _Identity(const IntrusiveListHook<mode> &) noexcept;
+
+	/* another never-called helper function which "calls"
+	   _Identity(), implicitly casting the item to the
+	   IntrusiveListHook specialization; we use this to detect
+	   which IntrusiveListHook specialization is used */
 	template<typename U>
-	using Hook = typename IntrusiveListHookDetection<U>::type;
+	static constexpr auto _Cast(const U &u) noexcept {
+		return decltype(_Identity(u))();
+	}
+
+	template<typename U>
+	using Hook = decltype(_Cast(std::declval<U>()));
 
 	static constexpr T *Cast(IntrusiveListNode *node) noexcept {
 		auto *hook = &Hook<T>::Cast(*node);
@@ -140,9 +147,13 @@ struct IntrusiveListMemberHookTraits {
  */
 template<typename T,
 	 typename HookTraits=IntrusiveListBaseHookTraits<T>,
-	 bool constant_time_size=false>
+	 IntrusiveListOptions options=IntrusiveListOptions{}>
 class IntrusiveList {
-	IntrusiveListNode head{&head, &head};
+	static constexpr bool constant_time_size = options.constant_time_size;
+
+	IntrusiveListNode head = options.zero_initialized
+		? IntrusiveListNode{nullptr, nullptr}
+		: IntrusiveListNode{&head, &head};
 
 	[[no_unique_address]]
 	OptionalCounter<constant_time_size> counter;
@@ -239,6 +250,10 @@ public:
 	}
 
 	constexpr bool empty() const noexcept {
+		if constexpr (options.zero_initialized)
+			if (head.next == nullptr)
+				return true;
+
 		return head.next == &head;
 	}
 
@@ -264,9 +279,7 @@ public:
 
 	void clear_and_dispose(Disposer<value_type> auto disposer) noexcept {
 		while (!empty()) {
-			auto *item = &front();
-			pop_front();
-			disposer(item);
+			disposer(&pop_front());
 		}
 	}
 
@@ -302,15 +315,15 @@ public:
 		return *Cast(head.next);
 	}
 
-	void pop_front() noexcept {
-		ToHook(front()).unlink();
-		--counter;
-	}
-
-	void pop_front_and_dispose(Disposer<value_type> auto disposer) noexcept {
+	reference pop_front() noexcept {
 		auto &i = front();
 		ToHook(i).unlink();
 		--counter;
+		return i;
+	}
+
+	void pop_front_and_dispose(Disposer<value_type> auto disposer) noexcept {
+		auto &i = pop_front();
 		disposer(&i);
 	}
 
@@ -319,7 +332,8 @@ public:
 	}
 
 	void pop_back() noexcept {
-		ToHook(back()).unlink();
+		auto &i = back();
+		ToHook(i).unlink();
 		--counter;
 	}
 
@@ -383,6 +397,10 @@ public:
 	};
 
 	constexpr iterator begin() noexcept {
+		if constexpr (options.zero_initialized)
+			if (head.next == nullptr)
+				return end();
+
 		return {head.next};
 	}
 
@@ -392,6 +410,16 @@ public:
 
 	static constexpr iterator iterator_to(reference t) noexcept {
 		return {&ToNode(t)};
+	}
+
+	using reverse_iterator = std::reverse_iterator<iterator>;
+
+	constexpr reverse_iterator rbegin() noexcept {
+		return reverse_iterator{end()};
+	}
+
+	constexpr reverse_iterator rend() noexcept {
+		return reverse_iterator{begin()};
 	}
 
 	class const_iterator final {
@@ -454,6 +482,10 @@ public:
 	};
 
 	constexpr const_iterator begin() const noexcept {
+		if constexpr (options.zero_initialized)
+			if (head.next == nullptr)
+				return end();
+
 		return {head.next};
 	}
 
@@ -465,6 +497,19 @@ public:
 		return {&ToNode(t)};
 	}
 
+	using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
+	constexpr const_reverse_iterator rbegin() const noexcept {
+		return reverse_iterator{end()};
+	}
+
+	constexpr const_reverse_iterator rend() const noexcept {
+		return reverse_iterator{begin()};
+	}
+
+	/**
+	 * @return an iterator to the item following the specified one
+	 */
 	iterator erase(iterator i) noexcept {
 		auto result = std::next(i);
 		ToHook(*i).unlink();
@@ -472,6 +517,9 @@ public:
 		return result;
 	}
 
+	/**
+	 * @return an iterator to the item following the specified one
+	 */
 	iterator erase_and_dispose(iterator i,
 				   Disposer<value_type> auto disposer) noexcept {
 		auto result = erase(i);
@@ -479,18 +527,30 @@ public:
 		return result;
 	}
 
-	void push_front(reference t) noexcept {
-		insert(begin(), t);
+	iterator push_front(reference t) noexcept {
+		return insert(begin(), t);
 	}
 
-	void push_back(reference t) noexcept {
-		insert(end(), t);
+	iterator push_back(reference t) noexcept {
+		return insert(end(), t);
 	}
 
-	void insert(iterator p, reference t) noexcept {
+	/**
+	 * Insert a new item before the given position.
+	 *
+	 * @param p a valid iterator (end() is allowed)for this list
+	 * describing the position where to insert
+	 *
+	 * @return an iterator to the new item
+	 */
+	iterator insert(iterator p, reference t) noexcept {
 		static_assert(!constant_time_size ||
 			      GetHookMode() < IntrusiveHookMode::AUTO_UNLINK,
 			      "Can't use auto-unlink hooks with constant_time_size");
+
+		if constexpr (options.zero_initialized)
+			if (head.next == nullptr)
+				head = {&head, &head};
 
 		auto &existing_node = *p.cursor;
 		auto &new_node = ToNode(t);
@@ -500,6 +560,19 @@ public:
 		IntrusiveListNode::Connect(new_node, existing_node);
 
 		++counter;
+
+		return iterator_to(t);
+	}
+
+	/**
+	 * Like insert(), but insert after the given position.
+	 */
+	iterator insert_after(iterator p, reference t) noexcept {
+		if constexpr (options.zero_initialized)
+			if (head.next == nullptr)
+				head = {&head, &head};
+
+		return insert(std::next(p), t);
 	}
 
 	/**
@@ -521,6 +594,10 @@ public:
 		    iterator _begin, iterator _end, size_type n) noexcept {
 		if (_begin == _end)
 			return;
+
+		if constexpr (options.zero_initialized)
+			if (head.next == nullptr)
+				head = {&head, &head};
 
 		auto &next_node = *position.cursor;
 		auto &prev_node = *std::prev(position).cursor;

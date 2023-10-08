@@ -2,6 +2,7 @@
 // Copyright The XCSoar Project
 
 #include "Main.hpp"
+#include "ReceiveTask.hpp"
 #include "Environment.hpp"
 #include "Components.hpp"
 #include "Context.hpp"
@@ -22,7 +23,6 @@
 #include "TextUtil.hpp"
 #include "TextEntryDialog.hpp"
 #include "Product.hpp"
-#include "Nook.hpp"
 #include "Language/Language.hpp"
 #include "Language/LanguageGlue.hpp"
 #include "LocalPath.hpp"
@@ -51,6 +51,7 @@
 #include "net/http/Init.hpp"
 #include "thread/Debug.hpp"
 #include "util/Exception.hxx"
+#include "util/ScopeExit.hxx"
 #include "GlobalSettings.hpp"
 
 #include "IOIOHelper.hpp"
@@ -66,14 +67,11 @@
 
 using namespace UI;
 
-unsigned android_api_level;
-
 Context *context;
 
 NativeView *native_view;
 
 Vibrator *vibrator;
-bool os_haptic_feedback_enabled;
 
 BluetoothHelper *bluetooth_helper;
 UsbSerialHelper *usb_serial_helper;
@@ -87,10 +85,8 @@ IOIOHelper *ioio_helper;
 static Mutex shutdown_mutex;
 
 static void
-InitNative(JNIEnv *env, int sdk_version) noexcept
+InitNative(JNIEnv *env) noexcept
 {
-  android_api_level = sdk_version;
-
   Java::Init(env);
   Java::Object::Initialise(env);
   Java::File::Initialise(env);
@@ -121,12 +117,37 @@ InitNative(JNIEnv *env, int sdk_version) noexcept
 
 gcc_visibility_default
 void
-Java_org_xcsoar_NativeView_initNative(JNIEnv *env, [[maybe_unused]] jclass cls,
-                                      int sdk_version)
+Java_org_xcsoar_NativeView_initNative(JNIEnv *env, [[maybe_unused]] jclass cls)
 {
   static std::once_flag init_native_flag;
 
-  std::call_once(init_native_flag, InitNative, env, sdk_version);
+  std::call_once(init_native_flag, InitNative, env);
+}
+
+gcc_visibility_default
+void
+Java_org_xcsoar_NativeView_deinitNative(JNIEnv *env,
+                                        [[maybe_unused]] jclass cls)
+{
+  AndroidTextEntryDialog::Deinitialise(env);
+  BMP085Device::Deinitialise(env);
+  I2CbaroDevice::Deinitialise(env);
+  NunchuckDevice::Deinitialise(env);
+  VoltageDevice::Deinitialise(env);
+  IOIOHelper::Deinitialise(env);
+  NativeDetectDeviceListener::Deinitialise(env);
+  UsbSerialHelper::Deinitialise(env);
+  BluetoothHelper::Deinitialise(env);
+  NativeInputListener::Deinitialise(env);
+  NativePortListener::Deinitialise(env);
+  InternalSensors::Deinitialise(env);
+  NativeSensorListener::Deinitialise(env);
+  GliderLink::Deinitialise(env);
+  AndroidBitmap::Deinitialise(env);
+  Environment::Deinitialise(env);
+  Context::Deinitialise(env);
+  NativeView::Deinitialise(env);
+  Java::URL::Deinitialise(env);
 }
 
 gcc_visibility_default
@@ -151,9 +172,22 @@ Java_org_xcsoar_NativeView_onConfigurationChangedNative([[maybe_unused]] JNIEnv 
 }
 
 gcc_visibility_default
+JNIEXPORT jstring JNICALL
+Java_org_xcsoar_NativeView_onReceiveXCTrackTask(JNIEnv *env,
+                                                [[maybe_unused]] jclass cls,
+                                                jstring data)
+try {
+  ReceiveXCTrackTask(Java::String::GetUTFChars(env, data).c_str());
+  return nullptr;
+} catch (...) {
+  return env->NewStringUTF(GetFullMessage(std::current_exception()).c_str());
+}
+
+gcc_visibility_default
 JNIEXPORT void JNICALL
 Java_org_xcsoar_NativeView_runNative(JNIEnv *env, jobject obj,
                                      jobject _context,
+                                     jobject _permission_manager,
                                      jint width, jint height,
                                      jint xdpi, jint ydpi,
                                      jstring product)
@@ -167,34 +201,57 @@ try {
   const bool have_ioio = IOIOHelper::Initialise(env);
 
   context = new Context(env, _context);
+  AtScopeExit() {
+    delete context;
+    context = nullptr;
+  };
+
+  permission_manager = env->NewGlobalRef(_permission_manager);
+  AtScopeExit(env) { env->DeleteGlobalRef(permission_manager); };
 
   const ScopeGlobalAsioThread global_asio_thread;
   const Net::ScopeInit net_init(asio_thread->GetEventLoop());
 
   InitialiseDataPath();
+  AtScopeExit() { DeinitialiseDataPath(); };
 
   LogFormat(_T("Starting XCSoar %s"), XCSoar_ProductToken);
 
   TextUtil::Initialise(env);
+  AtScopeExit(env) { TextUtil::Deinitialise(env); };
 
   assert(native_view == nullptr);
   native_view = new NativeView(env, obj, width, height, xdpi, ydpi,
                                product);
-#ifdef __arm__
-  is_nook = StringIsEqual(native_view->GetProduct(), "NOOK");
-#endif
+  AtScopeExit() {
+    delete native_view;
+    native_view = nullptr;
+  };
 
   SoundUtil::Initialise(env);
+  AtScopeExit(env) { SoundUtil::Deinitialise(env); };
+
   Vibrator::Initialise(env);
   vibrator = Vibrator::Create(env, *context);
 
+  AtScopeExit() {
+    delete vibrator;
+    vibrator = nullptr;
+  };
+
   if (have_bluetooth) {
     try {
-      bluetooth_helper = new BluetoothHelper(env, *context);
+      bluetooth_helper = new BluetoothHelper(env, *context,
+                                             permission_manager);
     } catch (...) {
       LogError(std::current_exception(), "Failed to initialise Bluetooth");
     }
   }
+
+  AtScopeExit() {
+    delete bluetooth_helper;
+    bluetooth_helper = nullptr;
+  };
 
   if (have_usb_serial) {
     try {
@@ -204,6 +261,11 @@ try {
     }
   }
 
+  AtScopeExit() {
+    delete usb_serial_helper;
+    usb_serial_helper = nullptr;
+  };
+
   if (have_ioio) {
     try {
       ioio_helper = new IOIOHelper(env);
@@ -212,19 +274,26 @@ try {
     }
   }
 
-#ifdef __arm__
-  if (IsNookSimpleTouch()) {
-    is_dithered = Nook::EnterFastMode();
-
-    /* enable USB host mode if this is a Nook */
-    Nook::InitUsb();
-  }
-#endif
+  AtScopeExit() {
+    delete ioio_helper;
+    ioio_helper = nullptr;
+  };
 
   ScreenGlobalInit screen_init;
+  AtScopeExit() { Fonts::Deinitialize(); };
 
   AllowLanguage();
+  AtScopeExit() { DisallowLanguage(); };
+
   InitLanguage();
+
+  AtScopeExit() {
+    if (CommonInterface::main_window != nullptr) {
+      CommonInterface::main_window->Destroy();
+      delete CommonInterface::main_window;
+      CommonInterface::main_window = nullptr;
+    }
+  };
 
   {
     const ScopeUnlock shutdown_unlock{shutdown_mutex};
@@ -234,62 +303,6 @@ try {
   }
 
   Shutdown();
-
-  if (IsNookSimpleTouch()) {
-    Nook::ExitFastMode();
-  }
-
-  if (CommonInterface::main_window != nullptr) {
-    CommonInterface::main_window->Destroy();
-    delete CommonInterface::main_window;
-    CommonInterface::main_window = nullptr;
-  }
-
-  DisallowLanguage();
-  Fonts::Deinitialize();
-
-  delete ioio_helper;
-  ioio_helper = nullptr;
-
-  delete usb_serial_helper;
-  usb_serial_helper = nullptr;
-
-  delete bluetooth_helper;
-  bluetooth_helper = nullptr;
-
-  delete vibrator;
-  vibrator = nullptr;
-
-  SoundUtil::Deinitialise(env);
-  delete native_view;
-  native_view = nullptr;
-
-  TextUtil::Deinitialise(env);
-
-  DeinitialiseDataPath();
-
-  delete context;
-  context = nullptr;
-
-  AndroidTextEntryDialog::Deinitialise(env);
-  BMP085Device::Deinitialise(env);
-  I2CbaroDevice::Deinitialise(env);
-  NunchuckDevice::Deinitialise(env);
-  VoltageDevice::Deinitialise(env);
-  IOIOHelper::Deinitialise(env);
-  NativeDetectDeviceListener::Deinitialise(env);
-  UsbSerialHelper::Deinitialise(env);
-  BluetoothHelper::Deinitialise(env);
-  NativeInputListener::Deinitialise(env);
-  NativePortListener::Deinitialise(env);
-  InternalSensors::Deinitialise(env);
-  NativeSensorListener::Deinitialise(env);
-  GliderLink::Deinitialise(env);
-  AndroidBitmap::Deinitialise(env);
-  Environment::Deinitialise(env);
-  Context::Deinitialise(env);
-  NativeView::Deinitialise(env);
-  Java::URL::Deinitialise(env);
 } catch (...) {
   /* if an error occurs, rethrow the C++ exception as Java exception,
      to be displayed by the Java glue code */
@@ -366,5 +379,5 @@ JNIEXPORT void JNICALL
 Java_org_xcsoar_NativeView_setHapticFeedback([[maybe_unused]] JNIEnv *env, [[maybe_unused]] jobject obj,
                                              jboolean on)
 {
-  os_haptic_feedback_enabled = on;
+  GlobalSettings::haptic_feedback = on;
 }

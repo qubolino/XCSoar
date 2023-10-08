@@ -1,8 +1,40 @@
-Version 7.37 - not yet released
+Version 7.40 - not yet released
+* user interface
+  - Added infobox that combines ETA with AAT dT
+  - FLARM: Add 100m zoom option.
+  - hide mouse cursor after 10 seconds of inactivity
+  - Move glider icon on thermal assist according to 30s average.
+* Linux
+  - fix the /etc/xcsoar data directory
+* Android
+  - raise targetSdkVersion to 33
+
+Version 7.39 - 2023/07/28
+* Android
+  - fix Bluetooth device list on Android versions older than 12
+  - do not request permission WRITE_EXTERNAL_STORAGE on Android 11 or newer
+
+Version 7.38 - 2023/07/27
+* WeGlide
+  - fix another crash bug
+* Android
+  - support scanning QR codes with XCTrack tasks
+  - fix location permission request on old Android versions
+  - fix IllegalArgumentException crash on old Android versions
+  - improved error messages for problems opening devices
+  - fix crash on Android 5
+  - fix conflict between "org.xcsoar" and "org.xcsoar.testing" apps
+
+Version 7.37 - 2023/07/21
 * WeGlide
   - fix crash bug
 * Android
+  - request ACCESS_FINE_LOCATION only when internal GPS is used
+  - request BLUETOOTH_CONNECT and BLUETOOTH_SCAN only when Bluetooth is used
+  - re-enable background location (yet another attempt)
   - fix crash with disallowed IOIO Accessory connection
+  - remove Nook support
+  - add SoftRF Ham and Midi into 'white list' of USB devices
 
 Version 7.36 - 2023/07/02
 * task
